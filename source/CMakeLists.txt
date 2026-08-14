@@ -2,8 +2,10 @@ file(GLOB_RECURSE maa_utils_src *.h *.hpp *.cpp)
 file(GLOB_RECURSE maa_utils_header ${MAAUTILS_DIR}/include/MaaUtils/*)
 
 # IAA: iOS 沙盒禁止创建子进程，ChildPipeIOStream（依赖 boost::process）不参与编译
+# IAA: PlatformMacOS.cpp 用 macOS 专属 libproc.h，iOS 无此头；list_processes/get_process_path 无调用方，直接排除
 if(IOS)
     list(FILTER maa_utils_src EXCLUDE REGEX "ChildPipeIOStream\\.cpp$")
+    list(FILTER maa_utils_src EXCLUDE REGEX "PlatformMacOS\\.cpp$")
 endif()
 add_library(MaaUtils SHARED ${maa_utils_src} ${maa_utils_header})
 target_include_directories(MaaUtils PRIVATE ${MAAUTILS_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR})
