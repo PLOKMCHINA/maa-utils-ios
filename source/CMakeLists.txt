@@ -5,7 +5,6 @@ file(GLOB_RECURSE maa_utils_header ${MAAUTILS_DIR}/include/MaaUtils/*)
 if(IOS)
     list(FILTER maa_utils_src EXCLUDE REGEX "ChildPipeIOStream\\.cpp$")
 endif()
-
 add_library(MaaUtils SHARED ${maa_utils_src} ${maa_utils_header})
 target_include_directories(MaaUtils PRIVATE ${MAAUTILS_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(MaaUtils PUBLIC Boost::regex PRIVATE Boost::system ${OpenCV_LIBS})
@@ -19,5 +18,9 @@ if(LINUX)
 endif()
 
 target_compile_definitions(MaaUtils PRIVATE MAA_UTILS_EXPORTS)
+# IAA: iOS 平台标记，PUBLIC 传播给 MaaCore（其源码也会 include BoostIO.hpp 链）
+if(IOS)
+    target_compile_definitions(MaaUtils PUBLIC MAA_UTILS_IOS)
+endif()
 
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${maa_utils_src})
