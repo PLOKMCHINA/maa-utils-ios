@@ -124,7 +124,7 @@ void cxa_exception_cleanup(int reason, void* unwind_exception) noexcept
 } // namespace
 
 extern "C" void* ios_cxa_init_primary(void* object, void* tinfo, void (*dest)(void*)) noexcept
-    __asm__("__cxa_init_primary_exception");
+    __asm__("___cxa_init_primary_exception");
 extern "C" void* ios_cxa_init_primary(void* object, void* tinfo, void (*dest)(void*)) noexcept
 {
     auto* hdr = static_cast<cxa_exception_head*>(object) - 1; // 头部在对象前面
