@@ -5,7 +5,7 @@
 #endif
 
 #include <filesystem>
-#include <format>
+#include "MaaUtils/CompatFormat.hpp"
 #include <fstream>
 #include <iostream>
 #include <mutex>

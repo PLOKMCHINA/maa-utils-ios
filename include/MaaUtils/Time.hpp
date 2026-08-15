@@ -9,7 +9,7 @@
 #endif
 
 #include <chrono>
-#include <format>
+#include "MaaUtils/CompatFormat.hpp"
 #include <string>
 
 #include "MaaUtils/Conf.h"

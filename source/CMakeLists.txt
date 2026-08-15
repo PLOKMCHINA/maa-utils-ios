@@ -6,6 +6,10 @@ file(GLOB_RECURSE maa_utils_header ${MAAUTILS_DIR}/include/MaaUtils/*)
 if(IOS)
     list(FILTER maa_utils_src EXCLUDE REGEX "ChildPipeIOStream\\.cpp$")
     list(FILTER maa_utils_src EXCLUDE REGEX "PlatformMacOS\\.cpp$")
+    # IAA: iOS 16 系统 libc++ 缺新版符号（to_chars 浮点/exception_ptr），
+    # source/iOSCompat.cpp 提供等价实现；std::format 由 fmt 库提供（CompatFormat.hpp）
+    find_package(fmt CONFIG REQUIRED)
+    target_link_libraries(MaaUtils PRIVATE fmt::fmt)
 endif()
 add_library(MaaUtils SHARED ${maa_utils_src} ${maa_utils_header})
 target_include_directories(MaaUtils PRIVATE ${MAAUTILS_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR})
