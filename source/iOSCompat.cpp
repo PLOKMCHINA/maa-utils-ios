@@ -9,12 +9,15 @@
 //   std::to_chars 浮点系列 9 个（float/double/long double × 无格式/chars_format/带精度）
 //   std::exception_ptr 4 个（C1 拷贝构造 / D1 析构 / aS 赋值 / __from_native_exception_pointer）
 //
+// ⚠️ 关键坑：Mach-O 下 extern "C" 函数名会自动加前导下划线（foo → _foo），
+// 直接把 mangled 名写 extern "C" 函数名会变成 ___ZNSt13...（三个下划线），
+// 与 C++ 引用的 __ZNSt13...（两个）永远对不上。必须用 asm label
+// （__attribute__((asm("符号名")))）精确指定最终符号名。
+//
 // 布局说明：新版 libc++（LLVM 18+）exception_ptr = 单个 void*（libc++abi 的
 // primary exception 句柄，refcount 由 __cxa_increment/decrement_exception_refcount
 // 管理）。libMaaCore/libMaaUtils 内所有 exception_ptr 操作（std::function 异常
-// 存储、terminate handler 的 current_exception 等）均走本实现 + 新版头文件
-// inline 路径，内部一致。系统库的 future/async 异常路径全程在系统库内部
-// （老布局），不与本实现交互。
+// 存储等）均走本实现 + 新版头文件 inline 路径，内部一致。
 //
 // to_chars 用 snprintf 实现：未指定精度时用 %.17g / %.9g（保证 round-trip，
 // 输出可能比最短形式略长，MaaCore 用于日志/JSON，无碍）。
@@ -30,10 +33,11 @@ extern "C" void __cxa_increment_exception_refcount(void*) noexcept;
 extern "C" void __cxa_decrement_exception_refcount(void*) noexcept;
 
 // ===================== std::exception_ptr（新版 ABI） =====================
-// 符号名：__ZNSt13exception_ptrC1ERKS_ / D1Ev / aSERKS_ / 31__from_native_exception_pointerEPv
 // 布局：单指针（native exception 句柄）。
 
-extern "C" void __ZNSt13exception_ptrC1ERKS_(void* self, const void* other) noexcept
+extern "C" void ep_copy_ctor(void* self, const void* other) noexcept
+    __attribute__((asm("__ZNSt13exception_ptrC1ERKS_")));
+extern "C" void ep_copy_ctor(void* self, const void* other) noexcept
 {
     void* p = *static_cast<void* const*>(other);
     if (p) {
@@ -42,7 +46,8 @@ extern "C" void __ZNSt13exception_ptrC1ERKS_(void* self, const void* other) noex
     *static_cast<void**>(self) = p;
 }
 
-extern "C" void __ZNSt13exception_ptrD1Ev(void* self) noexcept
+extern "C" void ep_dtor(void* self) noexcept __attribute__((asm("__ZNSt13exception_ptrD1Ev")));
+extern "C" void ep_dtor(void* self) noexcept
 {
     void* p = *static_cast<void**>(self);
     if (p) {
@@ -50,7 +55,9 @@ extern "C" void __ZNSt13exception_ptrD1Ev(void* self) noexcept
     }
 }
 
-extern "C" void* __ZNSt13exception_ptraSERKS_(void* self, const void* other) noexcept
+extern "C" void* ep_assign(void* self, const void* other) noexcept
+    __attribute__((asm("__ZNSt13exception_ptraSERKS_")));
+extern "C" void* ep_assign(void* self, const void* other) noexcept
 {
     void* np = *static_cast<void* const*>(other);
     if (np) {
@@ -66,14 +73,15 @@ extern "C" void* __ZNSt13exception_ptraSERKS_(void* self, const void* other) noe
 
 // __from_native_exception_pointer(void* __e)：__e 来自 __cxa_current_primary_exception()
 // （已带 1 个 refcount），直接持有。
-extern "C" void __ZNSt13exception_ptr31__from_native_exception_pointerEPv(void* self, void* p) noexcept
+extern "C" void ep_from_native(void* self, void* p) noexcept
+    __attribute__((asm("__ZNSt13exception_ptr31__from_native_exception_pointerEPv")));
+extern "C" void ep_from_native(void* self, void* p) noexcept
 {
     *static_cast<void**>(self) = p;
 }
 
 // ===================== std::to_chars 浮点系列 =====================
 // 返回 to_chars_result { char* ptr; std::errc ec; } —— arm64 按值返回 (x0, x1)
-// 符号：__ZNSt3__18to_charsEPcS0_{d,f,e}[NS_12chars_formatE[i]]
 // chars_format 底层 int：scientific=1 fixed=2 hex=4 general=3(scientific|fixed)
 
 enum iOSCompatCharsFormat : int
@@ -135,44 +143,51 @@ to_chars_out ios_to_chars_fmt(char* first, char* last, T value, int fmt, int pre
 }
 } // namespace
 
+#define IOS_COMPAT_TO_CHARS(suffix, param_list, asm_suffix) \
+    extern "C" to_chars_out ios_to_chars_##suffix param_list noexcept \
+        __attribute__((asm("__ZNSt3__18to_charsEPcS0_" suffix asm_suffix))); \
+    extern "C" to_chars_out ios_to_chars_##suffix param_list noexcept
+
 // ---- double (d) ----
-extern "C" to_chars_out __ZNSt3__18to_charsEPcS0_d(char* first, char* last, double value) noexcept
+IOS_COMPAT_TO_CHARS(d, (char* first, char* last, double value), "")
 {
     return ios_to_chars_general(first, last, value, 17);
 }
-extern "C" to_chars_out __ZNSt3__18to_charsEPcS0_dNS_12chars_formatE(char* first, char* last, double value, int fmt) noexcept
+IOS_COMPAT_TO_CHARS(d, (char* first, char* last, double value, int fmt), "NS_12chars_formatE")
 {
     return ios_to_chars_fmt(first, last, value, fmt, -1);
 }
-extern "C" to_chars_out __ZNSt3__18to_charsEPcS0_dNS_12chars_formatEi(char* first, char* last, double value, int fmt, int precision) noexcept
+IOS_COMPAT_TO_CHARS(d, (char* first, char* last, double value, int fmt, int precision), "NS_12chars_formatEi")
 {
     return ios_to_chars_fmt(first, last, value, fmt, precision);
 }
 
 // ---- float (f) ----
-extern "C" to_chars_out __ZNSt3__18to_charsEPcS0_f(char* first, char* last, float value) noexcept
+IOS_COMPAT_TO_CHARS(f, (char* first, char* last, float value), "")
 {
     return ios_to_chars_general(first, last, value, 9);
 }
-extern "C" to_chars_out __ZNSt3__18to_charsEPcS0_fNS_12chars_formatE(char* first, char* last, float value, int fmt) noexcept
+IOS_COMPAT_TO_CHARS(f, (char* first, char* last, float value, int fmt), "NS_12chars_formatE")
 {
     return ios_to_chars_fmt(first, last, value, fmt, -1);
 }
-extern "C" to_chars_out __ZNSt3__18to_charsEPcS0_fNS_12chars_formatEi(char* first, char* last, float value, int fmt, int precision) noexcept
+IOS_COMPAT_TO_CHARS(f, (char* first, char* last, float value, int fmt, int precision), "NS_12chars_formatEi")
 {
     return ios_to_chars_fmt(first, last, value, fmt, precision);
 }
 
 // ---- long double (e) —— arm64 iOS 上 long double 即 double ----
-extern "C" to_chars_out __ZNSt3__18to_charsEPcS0_e(char* first, char* last, long double value) noexcept
+IOS_COMPAT_TO_CHARS(e, (char* first, char* last, long double value), "")
 {
     return ios_to_chars_general(first, last, static_cast<double>(value), 17);
 }
-extern "C" to_chars_out __ZNSt3__18to_charsEPcS0_eNS_12chars_formatE(char* first, char* last, long double value, int fmt) noexcept
+IOS_COMPAT_TO_CHARS(e, (char* first, char* last, long double value, int fmt), "NS_12chars_formatE")
 {
     return ios_to_chars_fmt(first, last, static_cast<double>(value), fmt, -1);
 }
-extern "C" to_chars_out __ZNSt3__18to_charsEPcS0_eNS_12chars_formatEi(char* first, char* last, long double value, int fmt, int precision) noexcept
+IOS_COMPAT_TO_CHARS(e, (char* first, char* last, long double value, int fmt, int precision), "NS_12chars_formatEi")
 {
     return ios_to_chars_fmt(first, last, static_cast<double>(value), fmt, precision);
 }
+
+#undef IOS_COMPAT_TO_CHARS
