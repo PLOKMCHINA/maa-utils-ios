@@ -77,6 +77,22 @@ extern "C" void ep_from_native(void* self, void* p) noexcept
     *static_cast<void**>(self) = p;
 }
 
+// ===================== std::__hash_memory =====================
+// LLVM 18+ libc++ 新增（unordered 容器辅助），iOS 16 系统库没有。
+// 语义：确定性字节散列（libc++ 用 FNV-1a），返回 size_t。
+extern "C" size_t ios_hash_memory(const void* ptr, size_t size) noexcept
+    __asm__("__ZNSt3__113__hash_memoryEPKvm");
+extern "C" size_t ios_hash_memory(const void* ptr, size_t size) noexcept
+{
+    const unsigned char* p = static_cast<const unsigned char*>(ptr);
+    size_t h = 1469598103934665603ULL; // FNV offset basis
+    for (size_t i = 0; i < size; i++) {
+        h ^= p[i];
+        h *= 1099511628211ULL; // FNV prime
+    }
+    return h;
+}
+
 // ===================== std::to_chars 浮点系列 =====================
 // 返回 to_chars_result { char* ptr; std::errc ec; } —— arm64 按值返回 (x0, x1)
 // chars_format 底层 int：scientific=1 fixed=2 hex=4 general=3(scientific|fixed)
