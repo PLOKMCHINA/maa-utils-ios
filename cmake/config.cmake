@@ -33,8 +33,14 @@ else()
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 13)
         add_compile_options("-Wno-restrict")
     endif()
-    add_compile_options("$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-flto=thin>")
-    add_link_options("$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-flto=thin>")
+    # IAA: iOS 禁用 LTO（-flto=thin 会让链接器全量加载静态库所有对象，
+    # 把 opencv2.framework 里用不到的 dnn/protobuf 对象也拖进来 ->
+    # 与 vcpkg onnxruntime 的 libprotobuf.a 重复符号。iOS 上不要 LTO，
+    # 链接器按需提取对象即可，dnn 模块根本不参与链接。）
+    if(NOT IOS)
+        add_compile_options("$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-flto=thin>")
+        add_link_options("$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-flto=thin>")
+    endif()
 endif()
 
 if(LINUX AND WITH_RPATH_LIBRARY)
