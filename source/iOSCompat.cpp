@@ -77,6 +77,75 @@ extern "C" void ep_from_native(void* self, void* p) noexcept
     *static_cast<void**>(self) = p;
 }
 
+// ===================== __cxa_init_primary_exception =====================
+// libc++abi 的 LLVM 18+ 新符号（新版 std::make_exception_ptr / exception_ptr 路径引用），
+// iOS 16 系统库没有。语义：把已构造的异常对象初始化为 primary exception
+// （填 __cxa_exception 头部），返回对象指针。按 Itanium C++ ABI 布局实现。
+extern "C" void* __cxa_free_exception(void*) noexcept;
+
+namespace
+{
+// __cxa_exception 头部布局（Itanium C++ ABI / libc++abi），arm64
+struct cxa_exception_head
+{
+    void* exceptionType;                          // 0x00
+    void (*exceptionDestructor)(void*);           // 0x08
+    void* unexpectedHandler;                      // 0x10
+    void* terminateHandler;                       // 0x18
+    void* nextException;                          // 0x20
+    int handlerCount;                             // 0x28
+    int handlerSwitchValue;                       // 0x2c
+    const void* actionRecord;                     // 0x30
+    const void* languageSpecificData;             // 0x38
+    void* catchTemp;                              // 0x40
+    void* adjustedPtr;                            // 0x48
+    unsigned long long exception_class;           // 0x50
+    void (*exception_cleanup)(int, void*);        // 0x58
+    unsigned int private_1;                       // 0x60
+    unsigned int private_2;                       // 0x64
+};
+
+// 与 libc++abi 的 __gxx_exception_class 一致（"GNUCC++\0"）
+constexpr unsigned long long kGxxExceptionClass = 0x474E5543432B2B00ULL;
+
+// 等价于 libc++abi 的 __gxx_exception_cleanup（内部函数，不导出）：
+// unwinder 释放异常时调用——析构异常对象并释放内存
+void cxa_exception_cleanup(int reason, void* unwind_exception) noexcept
+{
+    (void)reason;
+    auto* ue = static_cast<unsigned char*>(unwind_exception);
+    auto* hdr = reinterpret_cast<cxa_exception_head*>(ue - 0x50); // unwindHeader 偏移
+    void* obj = hdr + 1;
+    if (hdr->exceptionDestructor) {
+        hdr->exceptionDestructor(obj);
+    }
+    __cxa_free_exception(obj);
+}
+} // namespace
+
+extern "C" void* ios_cxa_init_primary(void* object, void* tinfo, void (*dest)(void*)) noexcept
+    __asm__("__cxa_init_primary_exception");
+extern "C" void* ios_cxa_init_primary(void* object, void* tinfo, void (*dest)(void*)) noexcept
+{
+    auto* hdr = static_cast<cxa_exception_head*>(object) - 1; // 头部在对象前面
+    hdr->exceptionType = tinfo;
+    hdr->exceptionDestructor = dest;
+    hdr->unexpectedHandler = nullptr;
+    hdr->terminateHandler = nullptr;
+    hdr->nextException = nullptr;
+    hdr->handlerCount = 0;
+    hdr->handlerSwitchValue = 0;
+    hdr->actionRecord = nullptr;
+    hdr->languageSpecificData = nullptr;
+    hdr->catchTemp = nullptr;
+    hdr->adjustedPtr = nullptr;
+    hdr->exception_class = kGxxExceptionClass;
+    hdr->exception_cleanup = cxa_exception_cleanup;
+    hdr->private_1 = 0;
+    hdr->private_2 = 0;
+    return object;
+}
+
 // ===================== std::__hash_memory =====================
 // LLVM 18+ libc++ 新增（unordered 容器辅助），iOS 16 系统库没有。
 // 语义：确定性字节散列（libc++ 用 FNV-1a），返回 size_t。
