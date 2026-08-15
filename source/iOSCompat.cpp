@@ -9,18 +9,12 @@
 //   std::to_chars 浮点系列 9 个（float/double/long double × 无格式/chars_format/带精度）
 //   std::exception_ptr 4 个（C1 拷贝构造 / D1 析构 / aS 赋值 / __from_native_exception_pointer）
 //
-// ⚠️ 关键坑：Mach-O 下 extern "C" 函数名会自动加前导下划线（foo → _foo），
-// 直接把 mangled 名写 extern "C" 函数名会变成 ___ZNSt13...（三个下划线），
-// 与 C++ 引用的 __ZNSt13...（两个）永远对不上。必须用 asm label
-// （__attribute__((asm("符号名")))）精确指定最终符号名。
-//
-// 布局说明：新版 libc++（LLVM 18+）exception_ptr = 单个 void*（libc++abi 的
-// primary exception 句柄，refcount 由 __cxa_increment/decrement_exception_refcount
-// 管理）。libMaaCore/libMaaUtils 内所有 exception_ptr 操作（std::function 异常
-// 存储等）均走本实现 + 新版头文件 inline 路径，内部一致。
-//
-// to_chars 用 snprintf 实现：未指定精度时用 %.17g / %.9g（保证 round-trip，
-// 输出可能比最短形式略长，MaaCore 用于日志/JSON，无碍）。
+// ⚠️ 两个关键坑（都踩过）：
+// 1. Mach-O 下 extern "C" 函数名自动加前导下划线（foo → _foo），直接把 mangled
+//    名写 extern "C" 函数名会变成 ___ZNSt13...（三个下划线），与 C++ 引用的
+//    __ZNSt13...（两个）对不上。必须用 asm labels 语法精确指定符号名。
+// 2. Apple Clang 不认 __attribute__((asm("...")))（报 unknown attribute），
+//    必须用 GCC 风格的声明后缀 __asm__("符号名")，声明和定义都要带。
 
 #include <cstdint>
 #include <cstdio>
@@ -36,9 +30,10 @@ extern "C" void __cxa_decrement_exception_refcount(void*) noexcept;
 // 布局：单指针（native exception 句柄）。
 
 extern "C" void ep_copy_ctor(void* self, const void* other) noexcept
-    __attribute__((asm("__ZNSt13exception_ptrC1ERKS_")));
+    __asm__("__ZNSt13exception_ptrC1ERKS_");
 extern "C" void ep_copy_ctor(void* self, const void* other) noexcept
-{
+    {
+
     void* p = *static_cast<void* const*>(other);
     if (p) {
         __cxa_increment_exception_refcount(p);
@@ -46,9 +41,9 @@ extern "C" void ep_copy_ctor(void* self, const void* other) noexcept
     *static_cast<void**>(self) = p;
 }
 
-extern "C" void ep_dtor(void* self) noexcept __attribute__((asm("__ZNSt13exception_ptrD1Ev")));
-extern "C" void ep_dtor(void* self) noexcept
-{
+extern "C" void ep_dtor(void* self) noexcept __asm__("__ZNSt13exception_ptrD1Ev");
+extern "C" void ep_dtor(void* self) noexcept {
+
     void* p = *static_cast<void**>(self);
     if (p) {
         __cxa_decrement_exception_refcount(p);
@@ -56,9 +51,10 @@ extern "C" void ep_dtor(void* self) noexcept
 }
 
 extern "C" void* ep_assign(void* self, const void* other) noexcept
-    __attribute__((asm("__ZNSt13exception_ptraSERKS_")));
+    __asm__("__ZNSt13exception_ptraSERKS_");
 extern "C" void* ep_assign(void* self, const void* other) noexcept
-{
+    {
+
     void* np = *static_cast<void* const*>(other);
     if (np) {
         __cxa_increment_exception_refcount(np);
@@ -74,9 +70,10 @@ extern "C" void* ep_assign(void* self, const void* other) noexcept
 // __from_native_exception_pointer(void* __e)：__e 来自 __cxa_current_primary_exception()
 // （已带 1 个 refcount），直接持有。
 extern "C" void ep_from_native(void* self, void* p) noexcept
-    __attribute__((asm("__ZNSt13exception_ptr31__from_native_exception_pointerEPv")));
+    __asm__("__ZNSt13exception_ptr31__from_native_exception_pointerEPv");
 extern "C" void ep_from_native(void* self, void* p) noexcept
-{
+    {
+
     *static_cast<void**>(self) = p;
 }
 
@@ -143,49 +140,51 @@ to_chars_out ios_to_chars_fmt(char* first, char* last, T value, int fmt, int pre
 }
 } // namespace
 
-#define IOS_COMPAT_TO_CHARS(suffix, param_list, asm_suffix) \
-    extern "C" to_chars_out ios_to_chars_##suffix param_list noexcept \
-        __attribute__((asm("__ZNSt3__18to_charsEPcS0_" suffix asm_suffix))); \
-    extern "C" to_chars_out ios_to_chars_##suffix param_list noexcept
+// 宏：声明带 __asm__ 精确符号名（定义处不带——asm label 只允许在声明）
+// 注意：asm label 不支持重载，每个重载必须用不同 C 函数名（name 参数）
+#define IOS_COMPAT_TO_CHARS(name, suffix, param_list, asm_suffix) \
+    extern "C" to_chars_out name param_list noexcept \
+        __asm__("__ZNSt3__18to_charsEPcS0_" #suffix asm_suffix); \
+    extern "C" to_chars_out name param_list noexcept
 
 // ---- double (d) ----
-IOS_COMPAT_TO_CHARS(d, (char* first, char* last, double value), "")
+IOS_COMPAT_TO_CHARS(ios_tc_d, d, (char* first, char* last, double value), "")
 {
     return ios_to_chars_general(first, last, value, 17);
 }
-IOS_COMPAT_TO_CHARS(d, (char* first, char* last, double value, int fmt), "NS_12chars_formatE")
+IOS_COMPAT_TO_CHARS(ios_tc_d_fmt, d, (char* first, char* last, double value, int fmt), "NS_12chars_formatE")
 {
     return ios_to_chars_fmt(first, last, value, fmt, -1);
 }
-IOS_COMPAT_TO_CHARS(d, (char* first, char* last, double value, int fmt, int precision), "NS_12chars_formatEi")
+IOS_COMPAT_TO_CHARS(ios_tc_d_fmtp, d, (char* first, char* last, double value, int fmt, int precision), "NS_12chars_formatEi")
 {
     return ios_to_chars_fmt(first, last, value, fmt, precision);
 }
 
 // ---- float (f) ----
-IOS_COMPAT_TO_CHARS(f, (char* first, char* last, float value), "")
+IOS_COMPAT_TO_CHARS(ios_tc_f, f, (char* first, char* last, float value), "")
 {
     return ios_to_chars_general(first, last, value, 9);
 }
-IOS_COMPAT_TO_CHARS(f, (char* first, char* last, float value, int fmt), "NS_12chars_formatE")
+IOS_COMPAT_TO_CHARS(ios_tc_f_fmt, f, (char* first, char* last, float value, int fmt), "NS_12chars_formatE")
 {
     return ios_to_chars_fmt(first, last, value, fmt, -1);
 }
-IOS_COMPAT_TO_CHARS(f, (char* first, char* last, float value, int fmt, int precision), "NS_12chars_formatEi")
+IOS_COMPAT_TO_CHARS(ios_tc_f_fmtp, f, (char* first, char* last, float value, int fmt, int precision), "NS_12chars_formatEi")
 {
     return ios_to_chars_fmt(first, last, value, fmt, precision);
 }
 
 // ---- long double (e) —— arm64 iOS 上 long double 即 double ----
-IOS_COMPAT_TO_CHARS(e, (char* first, char* last, long double value), "")
+IOS_COMPAT_TO_CHARS(ios_tc_e, e, (char* first, char* last, long double value), "")
 {
     return ios_to_chars_general(first, last, static_cast<double>(value), 17);
 }
-IOS_COMPAT_TO_CHARS(e, (char* first, char* last, long double value, int fmt), "NS_12chars_formatE")
+IOS_COMPAT_TO_CHARS(ios_tc_e_fmt, e, (char* first, char* last, long double value, int fmt), "NS_12chars_formatE")
 {
     return ios_to_chars_fmt(first, last, static_cast<double>(value), fmt, -1);
 }
-IOS_COMPAT_TO_CHARS(e, (char* first, char* last, long double value, int fmt, int precision), "NS_12chars_formatEi")
+IOS_COMPAT_TO_CHARS(ios_tc_e_fmtp, e, (char* first, char* last, long double value, int fmt, int precision), "NS_12chars_formatEi")
 {
     return ios_to_chars_fmt(first, last, static_cast<double>(value), fmt, precision);
 }
