@@ -64,9 +64,9 @@ inline void string_trim_(StringT& str)
         using U = std::make_unsigned_t<decltype(c)>;
         U uc = static_cast<U>(c);
         // ASCII: 0x09-0x0D (\t\n\v\f\r), 0x20 (space), 0x85 (NEL), 0xA0 (NBSP)
-        // 常见 Unicode 空白: U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000
+        // 常见 Unicode 空白: U+1680, U+2000-U+200A, U+200B (ZWSP), U+2028, U+2029, U+202F, U+205F, U+3000
         return (uc >= 0x09 && uc <= 0x0D) || uc == 0x20 || uc == 0x85 || uc == 0xA0 ||
-               uc == 0x1680 || (uc >= 0x2000 && uc <= 0x200A) || uc == 0x2028 || uc == 0x2029 ||
+               uc == 0x1680 || (uc >= 0x2000 && uc <= 0x200B) || uc == 0x2028 || uc == 0x2029 ||
                uc == 0x202F || uc == 0x205F || uc == 0x3000;
     };
     auto not_wspace = [&](auto c) { return !is_wspace(c); };
