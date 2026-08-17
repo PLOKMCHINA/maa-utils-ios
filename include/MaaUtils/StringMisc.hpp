@@ -59,12 +59,20 @@ template <typename StringT>
 requires IsSomeKindOfString<StringT>
 inline void string_trim_(StringT& str)
 {
-    auto not_space = [](auto c) -> bool {
-        return c != 32;
+    // 去除所有 Unicode 空白：ASCII 控制字 + space + 全角空格 U+3000 + 零宽空格 U+200B 等
+    auto is_wspace = [](auto c) -> bool {
+        using U = std::make_unsigned_t<decltype(c)>;
+        U uc = static_cast<U>(c);
+        // ASCII: 0x09-0x0D (\t\n\v\f\r), 0x20 (space), 0x85 (NEL), 0xA0 (NBSP)
+        // 常见 Unicode 空白: U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000
+        return (uc >= 0x09 && uc <= 0x0D) || uc == 0x20 || uc == 0x85 || uc == 0xA0 ||
+               uc == 0x1680 || (uc >= 0x2000 && uc <= 0x200A) || uc == 0x2028 || uc == 0x2029 ||
+               uc == 0x202F || uc == 0x205F || uc == 0x3000;
     };
+    auto not_wspace = [&](auto c) { return !is_wspace(c); };
 
-    str.erase(std::ranges::find_if(str | std::views::reverse, not_space).base(), str.end());
-    str.erase(str.begin(), std::ranges::find_if(str, not_space));
+    str.erase(std::ranges::find_if(str | std::views::reverse, not_wspace).base(), str.end());
+    str.erase(str.begin(), std::ranges::find_if(str, not_wspace));
 }
 
 template <typename StringT>
